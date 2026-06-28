@@ -4,8 +4,8 @@ import { StyleSheet, Text, View, TouchableOpacity, SafeAreaView, Animated, Image
 const PLAYER_MAX_HP = 100;
 const ENEMY_MAX_HP = 120;
 const ARENA_WIDTH = 300;
-const ARENA_HEIGHT = 200;
-const ENEMY_POS = { x: 200, y: 100 }; // 敵は右側に固定
+const ARENA_HEIGHT = 240;
+const ENEMY_POS = { x: 200, y: 120 }; // 敵は右奥に固定
 
 export default function WrestlingGame() {
   const [playerHp, setPlayerHp] = useState(PLAYER_MAX_HP);
@@ -138,13 +138,13 @@ export default function WrestlingGame() {
           {/* 敵キャラクター（固定） */}
           <Animated.Image 
             source={require('../../assets/images/enemy.png')} 
-            style={[styles.character, { left: ENEMY_POS.x, top: ENEMY_POS.y }]} 
+            style={[styles.character, { left: ENEMY_POS.x, top: ENEMY_POS.y, zIndex: ENEMY_POS.y }]} 
             resizeMode="contain"
           />
           {/* プレイヤーキャラクター */}
           <Animated.Image 
             source={require('../../assets/images/player.png')} 
-            style={[styles.character, { left: playerPos.x, top: playerPos.y }]} 
+            style={[styles.character, { left: playerPos.x, top: playerPos.y, zIndex: playerPos.y }]} 
             resizeMode="contain"
           />
         </ImageBackground>
