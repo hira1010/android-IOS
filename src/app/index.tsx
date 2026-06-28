@@ -6,15 +6,15 @@ const ARENA_HEIGHT = 300;
 const ENEMY_POS = { x: 250, y: 150 };
 
 export default function WrestlingGame() {
-  const [messages, setMessages] = useState<string[]>(['【第1フェーズ完了】ジョイスティックと6ボタンを実装しました！']);
+  const [messages, setMessages] = useState<string[]>(['試合開始！ジョイスティックで移動、ボタンで技！']);
   const [isGameOver, setIsGameOver] = useState(false);
   const [isPlayerTurn, setIsPlayerTurn] = useState(true);
 
   // 必殺技ゲージ (0 ~ 100)
   const [specialGauge, setSpecialGauge] = useState(0);
 
-  // プレイヤーの座標
-  const [playerPos, setPlayerPos] = useState({ x: 50, y: 150 });
+  // 初期位置を端からもう少し中央に寄せる（X: 100 に変更）
+  const [playerPos, setPlayerPos] = useState({ x: 100, y: 150 });
   const [playerOpacity, setPlayerOpacity] = useState(1);
   const [enemyOpacity, setEnemyOpacity] = useState(1);
 
@@ -74,6 +74,23 @@ export default function WrestlingGame() {
     });
   };
 
+  // ダッシュ処理（向いている方向へ高速移動）
+  const dash = () => {
+    if (isGameOver) return;
+    const isFacingRight = playerPos.x <= ENEMY_POS.x;
+    const direction = isFacingRight ? 1 : -1;
+    const dashDistance = 80; // 1回のダッシュで進む距離
+    
+    setPlayerPos(prev => {
+      let newX = prev.x + (direction * dashDistance);
+      // リング外に出ないように制限
+      if (newX < -30) newX = -30;
+      if (newX > ARENA_WIDTH - 100) newX = ARENA_WIDTH - 100;
+      return { ...prev, x: newX };
+    });
+    addMessage('💨 猛ダッシュ！！！');
+  };
+
   const handlePressIn = (actionType: string) => {
     pressStartRef.current[actionType] = Date.now();
   };
@@ -87,17 +104,21 @@ export default function WrestlingGame() {
   const executeAction = (actionType: string, isStrong: boolean) => {
     if (isGameOver) return;
     
+    if (actionType === 'dash') {
+      dash();
+      return; // ダッシュは専用の処理を実行
+    }
+
     let actionName = '';
     if (actionType === 'strike') actionName = isStrong ? 'ドロップキック (強打撃)' : 'チョップ (弱打撃)';
     if (actionType === 'throw') actionName = isStrong ? 'パワーボム (強投げ)' : '投げ技 (弱投げ)';
     if (actionType === 'submission') actionName = isStrong ? '脇固め (強関節)' : '関節技 (弱関節)';
-    if (actionType === 'dash') actionName = 'ダッシュ';
     if (actionType === 'ukemi') actionName = '受け身待機';
     if (actionType === 'special') actionName = '💥 必殺技発動 💥';
 
     addMessage(`【${actionName}】を発動！`);
 
-    // 技を出したらゲージが溜まる（テスト用）
+    // 技を出したらゲージが溜まる
     if (actionType !== 'special') {
       setSpecialGauge(prev => Math.min(100, prev + 10));
     } else {
