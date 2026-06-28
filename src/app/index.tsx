@@ -1,129 +1,105 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { StyleSheet, Text, View, TouchableOpacity, ScrollView, SafeAreaView, Animated, Image } from 'react-native';
+import { StyleSheet, Text, View, TouchableOpacity, SafeAreaView, Animated, ImageBackground } from 'react-native';
 
 const PLAYER_MAX_HP = 100;
 const ENEMY_MAX_HP = 120;
+const ARENA_WIDTH = 300;
+const ARENA_HEIGHT = 200;
+const ENEMY_POS = { x: 200, y: 100 }; // 敵は右側に固定
 
 export default function WrestlingGame() {
   const [playerHp, setPlayerHp] = useState(PLAYER_MAX_HP);
   const [enemyHp, setEnemyHp] = useState(ENEMY_MAX_HP);
-  const [messages, setMessages] = useState<string[]>(['試合開始！両者、リングの中央で見合っています！']);
+  const [messages, setMessages] = useState<string[]>(['試合開始！敵に近づいて技を決めろ！']);
   const [isGameOver, setIsGameOver] = useState(false);
   const [isPlayerTurn, setIsPlayerTurn] = useState(true);
 
-  const scrollViewRef = useRef<ScrollView>(null);
-
-  // アニメーション用の値
-  const playerTranslateX = useRef(new Animated.Value(0)).current;
-  const enemyTranslateX = useRef(new Animated.Value(0)).current;
-  const playerOpacity = useRef(new Animated.Value(1)).current;
-  const enemyOpacity = useRef(new Animated.Value(1)).current;
+  // プレイヤーの座標 (左上が 0,0)
+  const [playerPos, setPlayerPos] = useState({ x: 50, y: 100 });
 
   const addMessage = (msg: string) => {
-    setMessages(prev => [...prev, msg]);
-  };
-
-  useEffect(() => {
-    if (scrollViewRef.current) {
-      scrollViewRef.current.scrollToEnd({ animated: true });
-    }
-  }, [messages]);
-
-  // ダメージ演出（点滅と揺れ）
-  const shakeAnimation = (target: 'player' | 'enemy') => {
-    const targetAnim = target === 'player' ? playerTranslateX : enemyTranslateX;
-    const opacityAnim = target === 'player' ? playerOpacity : enemyOpacity;
-    
-    Animated.sequence([
-      Animated.timing(opacityAnim, { toValue: 0.5, duration: 50, useNativeDriver: true }),
-      Animated.timing(targetAnim, { toValue: target === 'player' ? -10 : 10, duration: 50, useNativeDriver: true }),
-      Animated.timing(targetAnim, { toValue: target === 'player' ? 10 : -10, duration: 50, useNativeDriver: true }),
-      Animated.timing(targetAnim, { toValue: 0, duration: 50, useNativeDriver: true }),
-      Animated.timing(opacityAnim, { toValue: 1, duration: 50, useNativeDriver: true })
-    ]).start();
-  };
-
-  // 攻撃演出（突進）
-  const attackAnimation = (attacker: 'player' | 'enemy', callback: () => void) => {
-    const moveAnim = attacker === 'player' ? playerTranslateX : enemyTranslateX;
-    const direction = attacker === 'player' ? 50 : -50;
-
-    Animated.sequence([
-      // 飛び込み
-      Animated.timing(moveAnim, { toValue: direction, duration: 200, useNativeDriver: true }),
-      // 少し止まる（ヒット）
-      Animated.delay(100),
-      // 元の位置に戻る
-      Animated.timing(moveAnim, { toValue: 0, duration: 200, useNativeDriver: true })
-    ]).start(() => {
-      // 演出後にHP計算等のコールバック実行
-      callback();
+    setMessages(prev => {
+      const newMessages = [...prev, msg];
+      if (newMessages.length > 3) newMessages.shift(); // 最新3件だけ表示
+      return newMessages;
     });
+  };
+
+  // 移動処理
+  const move = (dx: number, dy: number) => {
+    if (isGameOver) return;
+    setPlayerPos(prev => {
+      let newX = prev.x + dx;
+      let newY = prev.y + dy;
+      // 画面外（リング外）に出ないように制限
+      if (newX < 0) newX = 0;
+      if (newX > ARENA_WIDTH - 50) newX = ARENA_WIDTH - 50; // キャラの幅を考慮
+      if (newY < 0) newY = 0;
+      if (newY > ARENA_HEIGHT - 60) newY = ARENA_HEIGHT - 60; // キャラの高さを考慮
+      return { x: newX, y: newY };
+    });
+  };
+
+  // 当たり判定
+  const checkHit = () => {
+    const distX = playerPos.x - ENEMY_POS.x;
+    const distY = playerPos.y - ENEMY_POS.y;
+    const distance = Math.sqrt(distX * distX + distY * distY);
+    return distance < 80; // 80ピクセル以内ならヒット
   };
 
   const enemyAttack = () => {
     if (isGameOver) return;
-    
     setTimeout(() => {
-      // 敵の攻撃アニメーション開始
-      attackAnimation('enemy', () => {
-        const damage = Math.floor(Math.random() * 15) + 5;
-        addMessage(`【敵の反撃】強烈なボディスラム！ あなたは ${damage} のダメージを受けた！`);
-        
-        // プレイヤーがダメージアニメーション
-        shakeAnimation('player');
-
-        setPlayerHp(prev => {
-          const newHp = Math.max(0, prev - damage);
-          if (newHp === 0) {
-            setIsGameOver(true);
-            addMessage('1... 2... 3... カンカンカン！ あなたは負けてしまった...');
-          }
-          return newHp;
-        });
-        setIsPlayerTurn(true);
+      const damage = Math.floor(Math.random() * 15) + 5;
+      addMessage(`【敵の反撃】強烈なボディスラム！ あなたは ${damage} のダメージを受けた！`);
+      setPlayerHp(prev => {
+        const newHp = Math.max(0, prev - damage);
+        if (newHp === 0) {
+          setIsGameOver(true);
+          addMessage('1... 2... 3... カンカンカン！ あなたは負けてしまった...');
+        }
+        return newHp;
       });
+      setIsPlayerTurn(true);
     }, 1500);
   };
 
   const attack = (moveName: string, minDmg: number, maxDmg: number) => {
     if (isGameOver || !isPlayerTurn) return;
     
+    // 当たり判定チェック
+    if (!checkHit()) {
+      addMessage(`【空振り】敵から遠すぎる！ ${moveName} が外れた！`);
+      return; // 空振りの場合はターン継続
+    }
+
     setIsPlayerTurn(false);
-
-    // プレイヤーの攻撃アニメーション開始
-    attackAnimation('player', () => {
-      const damage = Math.floor(Math.random() * (maxDmg - minDmg + 1)) + minDmg;
-      addMessage(`【あなたの攻撃】渾身の ${moveName} ！！ 敵に ${damage} のダメージ！`);
-      
-      // 敵がダメージアニメーション
-      shakeAnimation('enemy');
-
-      setEnemyHp(prev => {
-        const newHp = Math.max(0, prev - damage);
-        if (newHp === 0) {
-          setIsGameOver(true);
-          addMessage('1... 2... 3... カンカンカン！ あなたの勝利です！！！');
-        } else {
-          enemyAttack();
-        }
-        return newHp;
-      });
+    const damage = Math.floor(Math.random() * (maxDmg - minDmg + 1)) + minDmg;
+    addMessage(`【ヒット！】渾身の ${moveName} ！！ 敵に ${damage} のダメージ！`);
+    
+    setEnemyHp(prev => {
+      const newHp = Math.max(0, prev - damage);
+      if (newHp === 0) {
+        setIsGameOver(true);
+        addMessage('1... 2... 3... カンカンカン！ あなたの勝利です！！！');
+      } else {
+        enemyAttack();
+      }
+      return newHp;
     });
   };
 
   const resetGame = () => {
     setPlayerHp(PLAYER_MAX_HP);
     setEnemyHp(ENEMY_MAX_HP);
-    setMessages(['試合開始！両者、リングの中央で見合っています！']);
+    setMessages(['試合開始！敵に近づいて技を決めろ！']);
     setIsGameOver(false);
     setIsPlayerTurn(true);
+    setPlayerPos({ x: 50, y: 100 });
   };
 
-  const getHpWidth = (hp: number, maxHp: number) => {
-    return `${(hp / maxHp) * 100}%`;
-  };
-
+  const getHpWidth = (hp: number, maxHp: number) => `${(hp / maxHp) * 100}%`;
   const getHpColor = (hp: number, maxHp: number) => {
     const ratio = hp / maxHp;
     if (ratio > 0.5) return '#4caf50';
@@ -133,83 +109,86 @@ export default function WrestlingGame() {
 
   return (
     <SafeAreaView style={styles.container}>
-      {/* 敵のステータス */}
-      <View style={styles.statusBox}>
-        <Text style={styles.nameText}>ライバルレスラー</Text>
-        <View style={styles.hpBarBackground}>
-          <View style={[styles.hpBarFill, { width: getHpWidth(enemyHp, ENEMY_MAX_HP) as any, backgroundColor: getHpColor(enemyHp, ENEMY_MAX_HP) }]} />
+      {/* 上部ステータスバー */}
+      <View style={styles.header}>
+        <View style={styles.hpBox}>
+          <Text style={styles.nameText}>あなた</Text>
+          <View style={styles.hpBarBackground}>
+            <View style={[styles.hpBarFill, { width: getHpWidth(playerHp, PLAYER_MAX_HP) as any, backgroundColor: getHpColor(playerHp, PLAYER_MAX_HP) }]} />
+          </View>
         </View>
-        <Text style={styles.hpText}>{enemyHp} / {ENEMY_MAX_HP}</Text>
-      </View>
-
-      {/* キャラクター闘技場（リング） */}
-      <View style={styles.battleArena}>
-        <Animated.Image 
-          source={require('../../assets/images/player.png')} 
-          style={[styles.characterImage, { transform: [{ translateX: playerTranslateX }], opacity: playerOpacity }]} 
-          resizeMode="contain"
-        />
-        <Text style={styles.vsText}>VS</Text>
-        <Animated.Image 
-          source={require('../../assets/images/enemy.png')} 
-          style={[styles.characterImage, { transform: [{ translateX: enemyTranslateX }], opacity: enemyOpacity }]} 
-          resizeMode="contain"
-        />
-      </View>
-
-      {/* リング（実況メッセージエリア） */}
-      <View style={styles.ringArea}>
-        <ScrollView ref={scrollViewRef} style={styles.messageScroll} contentContainerStyle={styles.messageContainer}>
-          {messages.map((msg, index) => (
-            <Text key={index} style={styles.messageText}>{msg}</Text>
-          ))}
-        </ScrollView>
-      </View>
-
-      {/* プレイヤーのステータス */}
-      <View style={styles.statusBox}>
-        <Text style={styles.nameText}>あなた (You)</Text>
-        <View style={styles.hpBarBackground}>
-          <View style={[styles.hpBarFill, { width: getHpWidth(playerHp, PLAYER_MAX_HP) as any, backgroundColor: getHpColor(playerHp, PLAYER_MAX_HP) }]} />
+        <View style={styles.hpBox}>
+          <Text style={styles.nameTextEnemy}>ライバル</Text>
+          <View style={styles.hpBarBackground}>
+            <View style={[styles.hpBarFill, { width: getHpWidth(enemyHp, ENEMY_MAX_HP) as any, backgroundColor: getHpColor(enemyHp, ENEMY_MAX_HP) }]} />
+          </View>
         </View>
-        <Text style={styles.hpText}>{playerHp} / {PLAYER_MAX_HP}</Text>
       </View>
 
-      {/* コントローラー（技ボタン） */}
+      {/* メッセージエリア */}
+      <View style={styles.messageArea}>
+        {messages.map((msg, idx) => (
+          <Text key={idx} style={styles.messageText}>{msg}</Text>
+        ))}
+      </View>
+
+      {/* 闘技場（リング） */}
+      <View style={styles.arenaContainer}>
+        <ImageBackground source={require('../../assets/images/ring.png')} style={styles.arena} resizeMode="cover">
+          {/* 敵キャラクター（固定） */}
+          <Animated.Image 
+            source={require('../../assets/images/enemy.png')} 
+            style={[styles.character, { left: ENEMY_POS.x, top: ENEMY_POS.y }]} 
+            resizeMode="contain"
+          />
+          {/* プレイヤーキャラクター */}
+          <Animated.Image 
+            source={require('../../assets/images/player.png')} 
+            style={[styles.character, { left: playerPos.x, top: playerPos.y }]} 
+            resizeMode="contain"
+          />
+        </ImageBackground>
+      </View>
+
+      {/* コントローラーエリア */}
       <View style={styles.controllerArea}>
         {isGameOver ? (
           <TouchableOpacity style={styles.resetButton} onPress={resetGame}>
             <Text style={styles.buttonText}>もう一度戦う</Text>
           </TouchableOpacity>
         ) : (
-          <>
-            <View style={styles.buttonRow}>
-              <TouchableOpacity 
-                style={[styles.actionButton, !isPlayerTurn && styles.disabledButton]} 
-                onPress={() => attack('逆水平チョップ', 5, 10)}
-                disabled={!isPlayerTurn}
-              >
+          <View style={styles.controlRow}>
+            {/* 左側：十字キー */}
+            <View style={styles.dpad}>
+              <TouchableOpacity style={[styles.dpadBtn, styles.dpadUp]} onPress={() => move(0, -20)}>
+                <Text style={styles.dpadText}>▲</Text>
+              </TouchableOpacity>
+              <View style={styles.dpadMiddleRow}>
+                <TouchableOpacity style={[styles.dpadBtn, styles.dpadLeft]} onPress={() => move(-20, 0)}>
+                  <Text style={styles.dpadText}>◀</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={[styles.dpadBtn, styles.dpadRight]} onPress={() => move(20, 0)}>
+                  <Text style={styles.dpadText}>▶</Text>
+                </TouchableOpacity>
+              </View>
+              <TouchableOpacity style={[styles.dpadBtn, styles.dpadDown]} onPress={() => move(0, 20)}>
+                <Text style={styles.dpadText}>▼</Text>
+              </TouchableOpacity>
+            </View>
+
+            {/* 右側：アクションボタン */}
+            <View style={styles.actionPad}>
+              <TouchableOpacity style={[styles.actionBtn, !isPlayerTurn && styles.disabled]} onPress={() => attack('チョップ', 5, 10)}>
                 <Text style={styles.buttonText}>チョップ</Text>
               </TouchableOpacity>
-              
-              <TouchableOpacity 
-                style={[styles.actionButton, !isPlayerTurn && styles.disabledButton]} 
-                onPress={() => attack('ブレーンバスター', 10, 20)}
-                disabled={!isPlayerTurn}
-              >
+              <TouchableOpacity style={[styles.actionBtn, !isPlayerTurn && styles.disabled]} onPress={() => attack('投げ技', 10, 20)}>
                 <Text style={styles.buttonText}>投げ技</Text>
               </TouchableOpacity>
-            </View>
-            <View style={styles.buttonRow}>
-              <TouchableOpacity 
-                style={[styles.specialButton, !isPlayerTurn && styles.disabledButton]} 
-                onPress={() => attack('必殺！シャイニング・ウィザード', 20, 35)}
-                disabled={!isPlayerTurn}
-              >
-                <Text style={styles.buttonText}>💥 必殺技 💥</Text>
+              <TouchableOpacity style={[styles.specialBtn, !isPlayerTurn && styles.disabled]} onPress={() => attack('必殺技', 20, 35)}>
+                <Text style={styles.buttonText}>💥必殺💥</Text>
               </TouchableOpacity>
             </View>
-          </>
+          </View>
         )}
       </View>
     </SafeAreaView>
@@ -217,123 +196,32 @@ export default function WrestlingGame() {
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#222',
-    padding: 10,
-    justifyContent: 'space-between',
-  },
-  battleArena: {
-    flexDirection: 'row',
-    justifyContent: 'space-around',
-    alignItems: 'center',
-    height: 150,
-    backgroundColor: '#1a1a1a',
-    borderRadius: 8,
-    borderWidth: 2,
-    borderColor: '#444',
-    marginVertical: 5,
-    overflow: 'hidden',
-  },
-  characterImage: {
-    width: 100,
-    height: 120,
-  },
-  vsText: {
-    color: '#ffeb3b',
-    fontSize: 24,
-    fontWeight: 'bold',
-    fontStyle: 'italic',
-  },
-  statusBox: {
-    backgroundColor: '#333',
-    padding: 10,
-    borderRadius: 8,
-    marginVertical: 5,
-    borderWidth: 2,
-    borderColor: '#555',
-  },
-  nameText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: 'bold',
-    marginBottom: 5,
-  },
-  hpBarBackground: {
-    height: 15,
-    backgroundColor: '#555',
-    borderRadius: 8,
-    overflow: 'hidden',
-    marginBottom: 5,
-  },
-  hpBarFill: {
-    height: '100%',
-  },
-  hpText: {
-    color: '#ddd',
-    textAlign: 'right',
-    fontSize: 12,
-  },
-  ringArea: {
-    flex: 1,
-    backgroundColor: '#111',
-    borderRadius: 8,
-    borderWidth: 3,
-    borderColor: '#d32f2f',
-    marginVertical: 5,
-    padding: 10,
-  },
-  messageScroll: {
-    flex: 1,
-  },
-  messageContainer: {
-    paddingBottom: 10,
-  },
-  messageText: {
-    color: '#fff',
-    fontSize: 14,
-    marginBottom: 6,
-    lineHeight: 20,
-  },
-  controllerArea: {
-    padding: 10,
-    backgroundColor: '#444',
-    borderRadius: 8,
-    marginTop: 5,
-  },
-  buttonRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 10,
-  },
-  actionButton: {
-    flex: 1,
-    backgroundColor: '#2196f3',
-    padding: 12,
-    borderRadius: 8,
-    marginHorizontal: 5,
-    alignItems: 'center',
-  },
-  specialButton: {
-    flex: 1,
-    backgroundColor: '#ff9800',
-    padding: 12,
-    borderRadius: 8,
-    marginHorizontal: 5,
-    alignItems: 'center',
-  },
-  resetButton: {
-    backgroundColor: '#4caf50',
-    padding: 15,
-    borderRadius: 8,
-    alignItems: 'center',
-  },
-  disabledButton: {
-    opacity: 0.5,
-  },
-  buttonText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: 'bold',
-  },
+  container: { flex: 1, backgroundColor: '#222', paddingTop: 30 },
+  header: { flexDirection: 'row', justifyContent: 'space-between', paddingHorizontal: 10, marginBottom: 5 },
+  hpBox: { flex: 1, backgroundColor: '#333', padding: 8, marginHorizontal: 5, borderRadius: 5 },
+  nameText: { color: '#fff', fontWeight: 'bold', marginBottom: 2 },
+  nameTextEnemy: { color: '#fff', fontWeight: 'bold', marginBottom: 2, textAlign: 'right' },
+  hpBarBackground: { height: 12, backgroundColor: '#555', borderRadius: 5, overflow: 'hidden' },
+  hpBarFill: { height: '100%' },
+  messageArea: { height: 80, backgroundColor: '#111', padding: 8, marginHorizontal: 10, borderRadius: 5, justifyContent: 'flex-end' },
+  messageText: { color: '#ffeb3b', fontSize: 13, marginBottom: 2 },
+  arenaContainer: { flex: 1, margin: 10, backgroundColor: '#000', borderRadius: 8, overflow: 'hidden' },
+  arena: { flex: 1, width: '100%', height: '100%', position: 'relative' },
+  character: { width: 60, height: 80, position: 'absolute' },
+  controllerArea: { height: 200, backgroundColor: '#333', padding: 10, borderTopWidth: 2, borderColor: '#555' },
+  controlRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', flex: 1 },
+  dpad: { width: 140, height: 140, justifyContent: 'center', alignItems: 'center' },
+  dpadMiddleRow: { flexDirection: 'row', width: '100%', justifyContent: 'space-between' },
+  dpadBtn: { width: 45, height: 45, backgroundColor: '#555', justifyContent: 'center', alignItems: 'center', borderRadius: 5 },
+  dpadText: { color: '#fff', fontSize: 20 },
+  dpadUp: { marginBottom: 5 },
+  dpadDown: { marginTop: 5 },
+  dpadLeft: { marginRight: 5 },
+  dpadRight: { marginLeft: 5 },
+  actionPad: { flex: 1, marginLeft: 20, justifyContent: 'center' },
+  actionBtn: { backgroundColor: '#2196f3', padding: 12, borderRadius: 5, marginBottom: 8, alignItems: 'center' },
+  specialBtn: { backgroundColor: '#ff9800', padding: 12, borderRadius: 5, alignItems: 'center' },
+  resetButton: { backgroundColor: '#4caf50', padding: 20, borderRadius: 10, alignItems: 'center', justifyContent: 'center', flex: 1 },
+  buttonText: { color: '#fff', fontWeight: 'bold', fontSize: 16 },
+  disabled: { opacity: 0.5 },
 });
