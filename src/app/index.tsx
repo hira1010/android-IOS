@@ -1,23 +1,70 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { StyleSheet, Text, View, TouchableOpacity, SafeAreaView, ImageBackground, Image } from 'react-native';
+import { StyleSheet, Text, View, TouchableOpacity, SafeAreaView, ImageBackground, Image, PanResponder, Animated } from 'react-native';
 
-const PLAYER_MAX_HP = 100;
-const ENEMY_MAX_HP = 120;
 const ARENA_WIDTH = 400; 
 const ARENA_HEIGHT = 300;
 const ENEMY_POS = { x: 250, y: 150 };
 
 export default function WrestlingGame() {
-  const [playerHp, setPlayerHp] = useState(PLAYER_MAX_HP);
-  const [enemyHp, setEnemyHp] = useState(ENEMY_MAX_HP);
-  const [messages, setMessages] = useState<string[]>(['試合開始！十字キーで敵に近づいて技を決めろ！']);
+  const [messages, setMessages] = useState<string[]>(['【第1フェーズ完了】ジョイスティックと6ボタンを実装しました！']);
   const [isGameOver, setIsGameOver] = useState(false);
   const [isPlayerTurn, setIsPlayerTurn] = useState(true);
 
-  // プレイヤーの座標を単純なStateで管理（確実に動くように）
+  // 必殺技ゲージ (0 ~ 100)
+  const [specialGauge, setSpecialGauge] = useState(0);
+
+  // プレイヤーの座標
   const [playerPos, setPlayerPos] = useState({ x: 50, y: 150 });
   const [playerOpacity, setPlayerOpacity] = useState(1);
   const [enemyOpacity, setEnemyOpacity] = useState(1);
+
+  // ジョイスティックのツマミ位置
+  const [joystickPos, setJoystickPos] = useState({ x: 0, y: 0 });
+  
+  // ボタン長押し判定用
+  const pressStartRef = useRef<{ [key: string]: number }>({});
+
+  // 必殺技ボタンの点滅アニメーション
+  const glowAnim = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    Animated.loop(
+      Animated.sequence([
+        Animated.timing(glowAnim, { toValue: 1, duration: 800, useNativeDriver: false }),
+        Animated.timing(glowAnim, { toValue: 0, duration: 800, useNativeDriver: false })
+      ])
+    ).start();
+  }, []);
+
+  // ジョイスティックのPanResponder
+  const panResponder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onPanResponderMove: (evt, gestureState) => {
+        const { dx, dy } = gestureState;
+        const maxDist = 30;
+        const dist = Math.sqrt(dx*dx + dy*dy);
+        const ratio = dist > maxDist ? maxDist / dist : 1;
+        setJoystickPos({ x: dx * ratio, y: dy * ratio });
+        
+        // ジョイスティックの傾きに応じて移動
+        if (!isGameOver) {
+          setPlayerPos(prev => {
+            let newX = prev.x + (dx * ratio * 0.1);
+            let newY = prev.y + (dy * ratio * 0.1);
+            if (newX < -30) newX = -30;
+            if (newX > ARENA_WIDTH - 100) newX = ARENA_WIDTH - 100;
+            if (newY < 20) newY = 20; 
+            if (newY > ARENA_HEIGHT - 120) newY = ARENA_HEIGHT - 120;
+            return { x: newX, y: newY };
+          });
+        }
+      },
+      onPanResponderRelease: () => {
+        setJoystickPos({ x: 0, y: 0 });
+      }
+    })
+  ).current;
 
   const addMessage = (msg: string) => {
     setMessages(prev => {
@@ -27,105 +74,35 @@ export default function WrestlingGame() {
     });
   };
 
-  // 移動処理 (十字キー)
-  const move = (dx: number, dy: number) => {
-    if (isGameOver || !isPlayerTurn) return;
-    setPlayerPos(prev => {
-      let newX = prev.x + dx;
-      let newY = prev.y + dy;
-      
-      // リング外に出ないように制限
-      if (newX < -30) newX = -30;
-      if (newX > ARENA_WIDTH - 100) newX = ARENA_WIDTH - 100;
-      if (newY < 20) newY = 20; 
-      if (newY > ARENA_HEIGHT - 120) newY = ARENA_HEIGHT - 120;
-
-      // すり抜け防止（敵との衝突判定）
-      const distX = Math.abs(newX - ENEMY_POS.x);
-      const distY = Math.abs(newY - ENEMY_POS.y);
-      if (distX < 60 && distY < 30) {
-        // 敵と重なる場合は移動をキャンセルする
-        return prev;
-      }
-
-      return { x: newX, y: newY };
-    });
+  const handlePressIn = (actionType: string) => {
+    pressStartRef.current[actionType] = Date.now();
   };
 
-  // 当たり判定（攻撃時）
-  const checkHit = () => {
-    const distX = playerPos.x - ENEMY_POS.x;
-    const distY = playerPos.y - ENEMY_POS.y;
-    const distance = Math.sqrt(distX * distX + distY * distY);
-    return distance < 100; // 攻撃が届く距離
+  const handlePressOut = (actionType: string) => {
+    const duration = Date.now() - (pressStartRef.current[actionType] || 0);
+    const isStrong = duration > 300; // 300ms以上で強攻撃
+    executeAction(actionType, isStrong);
   };
 
-  // 揺れ・点滅アニメーションの代替（Stateでシンプルに実装）
-  const shakeAnimation = (target: 'player' | 'enemy') => {
-    const setOpacity = target === 'player' ? setPlayerOpacity : setEnemyOpacity;
-    setOpacity(0.3);
-    setTimeout(() => setOpacity(1), 150);
-  };
-
-  const enemyAttack = () => {
+  const executeAction = (actionType: string, isStrong: boolean) => {
     if (isGameOver) return;
-    setTimeout(() => {
-      const damage = Math.floor(Math.random() * 15) + 5;
-      addMessage(`【敵の反撃】強烈なボディスラム！ あなたは ${damage} のダメージを受けた！`);
-      shakeAnimation('player');
-      setPlayerHp(prev => {
-        const newHp = Math.max(0, prev - damage);
-        if (newHp === 0) {
-          setIsGameOver(true);
-          addMessage('1... 2... 3... カンカンカン！ あなたは負けてしまった...');
-        }
-        return newHp;
-      });
-      setIsPlayerTurn(true);
-    }, 1000);
-  };
-
-  const attack = (moveName: string, minDmg: number, maxDmg: number) => {
-    if (isGameOver || !isPlayerTurn) return;
     
-    if (!checkHit()) {
-      addMessage(`【空振り】敵から遠すぎる！ ${moveName} が外れた！`);
-      return;
+    let actionName = '';
+    if (actionType === 'strike') actionName = isStrong ? 'ドロップキック (強打撃)' : 'チョップ (弱打撃)';
+    if (actionType === 'throw') actionName = isStrong ? 'パワーボム (強投げ)' : '投げ技 (弱投げ)';
+    if (actionType === 'submission') actionName = isStrong ? '脇固め (強関節)' : '関節技 (弱関節)';
+    if (actionType === 'dash') actionName = 'ダッシュ';
+    if (actionType === 'ukemi') actionName = '受け身待機';
+    if (actionType === 'special') actionName = '💥 必殺技発動 💥';
+
+    addMessage(`【${actionName}】を発動！`);
+
+    // 技を出したらゲージが溜まる（テスト用）
+    if (actionType !== 'special') {
+      setSpecialGauge(prev => Math.min(100, prev + 10));
+    } else {
+      setSpecialGauge(0);
     }
-
-    setIsPlayerTurn(false);
-    
-    const damage = Math.floor(Math.random() * (maxDmg - minDmg + 1)) + minDmg;
-    addMessage(`【ヒット！】渾身の ${moveName} ！！ 敵に ${damage} のダメージ！`);
-    shakeAnimation('enemy');
-    
-    setEnemyHp(prev => {
-      const newHp = Math.max(0, prev - damage);
-      if (newHp === 0) {
-        setIsGameOver(true);
-        addMessage('1... 2... 3... カンカンカン！ あなたの勝利です！！！');
-      } else {
-        enemyAttack();
-      }
-      return newHp;
-    });
-  };
-
-  const resetGame = () => {
-    setPlayerHp(PLAYER_MAX_HP);
-    setEnemyHp(ENEMY_MAX_HP);
-    setMessages(['試合開始！十字キーで敵に近づいて技を決めろ！']);
-    setIsGameOver(false);
-    setIsPlayerTurn(true);
-    setPlayerPos({ x: 50, y: 150 });
-  };
-
-  const getHpWidth = (hp: number, maxHp: number) => `${(hp / maxHp) * 100}%`;
-  const getHpColor = (hp: number, maxHp: number) => {
-    const ratio = hp / maxHp;
-    if (ratio > 0.5) return '#4caf50';
-    if (ratio > 0.2) return '#ffeb3b';
-    return '#f44336';
   };
 
   // 常に対峙するための向き計算
@@ -133,19 +110,19 @@ export default function WrestlingGame() {
   const playerScaleX = isPlayerRight ? -1 : 1;
   const enemyScaleX = isPlayerRight ? 1 : -1;
 
+  const glowColor = glowAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: ['#ffd700', '#fffacd'] // ゴールドから薄いイエローへ
+  });
+
   return (
     <SafeAreaView style={styles.container}>
+      {/* 上部ステータス（体力ゲージ廃止、必殺技ゲージのみ） */}
       <View style={styles.header}>
         <View style={styles.hpBox}>
-          <Text style={styles.nameText}>あなた</Text>
+          <Text style={styles.nameText}>必殺技ゲージ</Text>
           <View style={styles.hpBarBackground}>
-            <View style={[styles.hpBarFill, { width: getHpWidth(playerHp, PLAYER_MAX_HP) as any, backgroundColor: getHpColor(playerHp, PLAYER_MAX_HP) }]} />
-          </View>
-        </View>
-        <View style={styles.hpBox}>
-          <Text style={styles.nameTextEnemy}>ライバル</Text>
-          <View style={styles.hpBarBackground}>
-            <View style={[styles.hpBarFill, { width: getHpWidth(enemyHp, ENEMY_MAX_HP) as any, backgroundColor: getHpColor(enemyHp, ENEMY_MAX_HP) }]} />
+            <View style={[styles.specialBarFill, { width: `${specialGauge}%` }]} />
           </View>
         </View>
       </View>
@@ -161,62 +138,80 @@ export default function WrestlingGame() {
           {/* 敵キャラクター */}
           <Image 
             source={require('../../assets/images/enemy.png')} 
-            style={[
-              styles.character, 
-              { left: ENEMY_POS.x, top: ENEMY_POS.y, opacity: enemyOpacity, zIndex: ENEMY_POS.y, transform: [{ scaleX: enemyScaleX }] }
-            ]} 
+            style={[styles.character, { left: ENEMY_POS.x, top: ENEMY_POS.y, opacity: enemyOpacity, zIndex: ENEMY_POS.y, transform: [{ scaleX: enemyScaleX }] }]} 
             resizeMode="contain"
           />
           {/* プレイヤーキャラクター */}
           <Image 
             source={require('../../assets/images/player.png')} 
-            style={[
-              styles.character, 
-              { left: playerPos.x, top: playerPos.y, opacity: playerOpacity, zIndex: playerPos.y, transform: [{ scaleX: playerScaleX }] }
-            ]} 
+            style={[styles.character, { left: playerPos.x, top: playerPos.y, opacity: playerOpacity, zIndex: playerPos.y, transform: [{ scaleX: playerScaleX }] }]} 
             resizeMode="contain"
           />
         </ImageBackground>
       </View>
 
       <View style={styles.controllerArea}>
-        {isGameOver ? (
-          <TouchableOpacity style={styles.resetButton} onPress={resetGame}>
-            <Text style={styles.buttonText}>もう一度戦う</Text>
-          </TouchableOpacity>
-        ) : (
-          <View style={styles.controlRow}>
-            {/* 十字キー (onPress で確実に反応させる) */}
-            <View style={styles.dpad}>
-              <TouchableOpacity style={[styles.dpadBtn, styles.dpadUp]} onPress={() => move(0, -30)}>
-                <Text style={styles.dpadText}>▲</Text>
-              </TouchableOpacity>
-              <View style={styles.dpadMiddleRow}>
-                <TouchableOpacity style={[styles.dpadBtn, styles.dpadLeft]} onPress={() => move(-30, 0)}>
-                  <Text style={styles.dpadText}>◀</Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={[styles.dpadBtn, styles.dpadRight]} onPress={() => move(30, 0)}>
-                  <Text style={styles.dpadText}>▶</Text>
-                </TouchableOpacity>
-              </View>
-              <TouchableOpacity style={[styles.dpadBtn, styles.dpadDown]} onPress={() => move(0, 30)}>
-                <Text style={styles.dpadText}>▼</Text>
-              </TouchableOpacity>
-            </View>
-
-            <View style={styles.actionPad}>
-              <TouchableOpacity style={[styles.actionBtn, !isPlayerTurn && styles.disabled]} onPress={() => attack('チョップ', 5, 10)}>
-                <Text style={styles.buttonText}>チョップ</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={[styles.actionBtn, !isPlayerTurn && styles.disabled]} onPress={() => attack('投げ技', 10, 20)}>
-                <Text style={styles.buttonText}>投げ技</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={[styles.specialBtn, !isPlayerTurn && styles.disabled]} onPress={() => attack('必殺技', 20, 35)}>
-                <Text style={styles.buttonText}>💥必殺💥</Text>
-              </TouchableOpacity>
+        <View style={styles.controlRow}>
+          {/* 左側：仮想ジョイスティック */}
+          <View style={styles.joystickArea}>
+            <View style={styles.joystickBase} {...panResponder.panHandlers}>
+              <View style={[styles.joystickStick, { transform: [{ translateX: joystickPos.x }, { translateY: joystickPos.y }] }]} />
             </View>
           </View>
-        )}
+
+          {/* 右側：6アクションボタン (縦2列 x 3個) */}
+          <View style={styles.actionPad}>
+            <View style={styles.buttonCol}>
+              <TouchableOpacity 
+                style={[styles.btn, { backgroundColor: '#f44336' }]} // レッド
+                onPressIn={() => handlePressIn('strike')}
+                onPressOut={() => handlePressOut('strike')}
+              >
+                <Text style={styles.btnText}>打撃</Text>
+              </TouchableOpacity>
+              <TouchableOpacity 
+                style={[styles.btn, { backgroundColor: '#4caf50' }]} // グリーン
+                onPressIn={() => handlePressIn('throw')}
+                onPressOut={() => handlePressOut('throw')}
+              >
+                <Text style={styles.btnText}>投げ</Text>
+              </TouchableOpacity>
+              <TouchableOpacity 
+                style={[styles.btn, { backgroundColor: '#9c27b0' }]} // パープル
+                onPressIn={() => handlePressIn('submission')}
+                onPressOut={() => handlePressOut('submission')}
+              >
+                <Text style={styles.btnText}>関節技</Text>
+              </TouchableOpacity>
+            </View>
+            <View style={styles.buttonCol}>
+              <TouchableOpacity 
+                style={[styles.btn, { backgroundColor: '#ff9800' }]} // オレンジ
+                onPressIn={() => handlePressIn('dash')}
+                onPressOut={() => handlePressOut('dash')}
+              >
+                <Text style={styles.btnText}>ダッシュ</Text>
+              </TouchableOpacity>
+              <TouchableOpacity 
+                style={[styles.btn, { backgroundColor: '#2196f3' }]} // ブルー
+                onPressIn={() => handlePressIn('ukemi')}
+                onPressOut={() => handlePressOut('ukemi')}
+              >
+                <Text style={styles.btnText}>受け身</Text>
+              </TouchableOpacity>
+              <Animated.View style={[styles.btn, { backgroundColor: glowColor, borderColor: '#ffb300', borderWidth: 2 }]}> 
+                <TouchableOpacity 
+                  style={{width: '100%', height: '100%', justifyContent: 'center', alignItems: 'center'}}
+                  onPressIn={() => handlePressIn('special')}
+                  onPressOut={() => handlePressOut('special')}
+                  disabled={specialGauge < 100}
+                >
+                  <Text style={[styles.btnText, { color: '#000', fontWeight: '900' }]}>必殺技</Text>
+                </TouchableOpacity>
+              </Animated.View>
+            </View>
+          </View>
+        </View>
       </View>
     </SafeAreaView>
   );
@@ -224,35 +219,23 @@ export default function WrestlingGame() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#222', paddingTop: 10 },
-  header: { flexDirection: 'row', justifyContent: 'space-between', paddingHorizontal: 10, marginBottom: 5 },
-  hpBox: { flex: 1, backgroundColor: '#333', padding: 8, marginHorizontal: 5, borderRadius: 5 },
-  nameText: { color: '#fff', fontWeight: 'bold', marginBottom: 2 },
-  nameTextEnemy: { color: '#fff', fontWeight: 'bold', marginBottom: 2, textAlign: 'right' },
-  hpBarBackground: { height: 12, backgroundColor: '#555', borderRadius: 5, overflow: 'hidden' },
-  hpBarFill: { height: '100%' },
-  messageArea: { height: 80, backgroundColor: '#111', padding: 8, marginHorizontal: 10, borderRadius: 5, justifyContent: 'flex-end' },
+  header: { flexDirection: 'row', justifyContent: 'center', paddingHorizontal: 10, marginBottom: 5 },
+  hpBox: { flex: 1, backgroundColor: '#333', padding: 8, marginHorizontal: 5, borderRadius: 5, maxWidth: 300 },
+  nameText: { color: '#ffd700', fontWeight: 'bold', marginBottom: 2, textAlign: 'center' },
+  hpBarBackground: { height: 15, backgroundColor: '#555', borderRadius: 5, overflow: 'hidden' },
+  specialBarFill: { height: '100%', backgroundColor: '#ffeb3b' },
+  messageArea: { height: 70, backgroundColor: '#111', padding: 8, marginHorizontal: 10, borderRadius: 5, justifyContent: 'flex-end' },
   messageText: { color: '#ffeb3b', fontSize: 13, marginBottom: 2 },
   arenaContainer: { flex: 1, margin: 10, backgroundColor: '#000', borderRadius: 8, overflow: 'hidden' },
   arena: { flex: 1, width: '100%', height: '100%', position: 'relative' },
-  character: { 
-    width: 140, 
-    height: 160, 
-    position: 'absolute'
-  }, 
-  controllerArea: { height: 200, backgroundColor: '#333', padding: 10, borderTopWidth: 2, borderColor: '#555' },
+  character: { width: 140, height: 160, position: 'absolute' }, 
+  controllerArea: { height: 220, backgroundColor: '#333', padding: 10, borderTopWidth: 2, borderColor: '#555' },
   controlRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', flex: 1 },
-  dpad: { width: 140, height: 140, justifyContent: 'center', alignItems: 'center' },
-  dpadMiddleRow: { flexDirection: 'row', width: '100%', justifyContent: 'space-between' },
-  dpadBtn: { width: 45, height: 45, backgroundColor: '#555', justifyContent: 'center', alignItems: 'center', borderRadius: 5 },
-  dpadText: { color: '#fff', fontSize: 20 },
-  dpadUp: { marginBottom: 5 },
-  dpadDown: { marginTop: 5 },
-  dpadLeft: { marginRight: 5 },
-  dpadRight: { marginLeft: 5 },
-  actionPad: { flex: 1, marginLeft: 20, justifyContent: 'center' },
-  actionBtn: { backgroundColor: '#2196f3', padding: 12, borderRadius: 5, marginBottom: 8, alignItems: 'center' },
-  specialBtn: { backgroundColor: '#ff9800', padding: 12, borderRadius: 5, alignItems: 'center' },
-  resetButton: { backgroundColor: '#4caf50', padding: 20, borderRadius: 10, alignItems: 'center', justifyContent: 'center', flex: 1 },
-  buttonText: { color: '#fff', fontWeight: 'bold', fontSize: 16 },
-  disabled: { opacity: 0.5 },
+  joystickArea: { width: 140, height: 140, justifyContent: 'center', alignItems: 'center' },
+  joystickBase: { width: 100, height: 100, borderRadius: 50, backgroundColor: '#555', justifyContent: 'center', alignItems: 'center' },
+  joystickStick: { width: 50, height: 50, borderRadius: 25, backgroundColor: '#999', borderWidth: 2, borderColor: '#fff' },
+  actionPad: { flex: 1, marginLeft: 10, flexDirection: 'row', justifyContent: 'space-around' },
+  buttonCol: { justifyContent: 'space-around', height: '100%', width: '45%' },
+  btn: { paddingVertical: 15, borderRadius: 8, alignItems: 'center', justifyContent: 'center', marginVertical: 3, flex: 1 },
+  btnText: { color: '#fff', fontWeight: 'bold', fontSize: 14 },
 });
