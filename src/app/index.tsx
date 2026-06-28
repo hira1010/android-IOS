@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { StyleSheet, Text, View, TouchableOpacity, SafeAreaView, Animated, ImageBackground } from 'react-native';
+import { StyleSheet, Text, View, TouchableOpacity, SafeAreaView, ImageBackground, Image } from 'react-native';
 
 const PLAYER_MAX_HP = 100;
 const ENEMY_MAX_HP = 120;
 const ARENA_WIDTH = 400; 
 const ARENA_HEIGHT = 300;
+const ENEMY_POS = { x: 250, y: 150 };
 
 export default function WrestlingGame() {
   const [playerHp, setPlayerHp] = useState(PLAYER_MAX_HP);
@@ -13,22 +14,10 @@ export default function WrestlingGame() {
   const [isGameOver, setIsGameOver] = useState(false);
   const [isPlayerTurn, setIsPlayerTurn] = useState(true);
 
-  // プレイヤーと敵の座標を Animated.ValueXY で管理
-  const playerPosition = useRef(new Animated.ValueXY({ x: 50, y: 120 })).current;
-  const enemyPosition = useRef(new Animated.ValueXY({ x: 200, y: 120 })).current;
-
-  // アニメーション用のOpacity
-  const playerOpacity = useRef(new Animated.Value(1)).current;
-  const enemyOpacity = useRef(new Animated.Value(1)).current;
-
-  // 座標をトラッキングするためのリスナー（当たり判定用）
-  const playerCoords = useRef({ x: 50, y: 120 });
-  useEffect(() => {
-    const listener = playerPosition.addListener(value => {
-      playerCoords.current = value;
-    });
-    return () => playerPosition.removeListener(listener);
-  }, []);
+  // プレイヤーの座標を単純なStateで管理（確実に動くように）
+  const [playerPos, setPlayerPos] = useState({ x: 50, y: 150 });
+  const [playerOpacity, setPlayerOpacity] = useState(1);
+  const [enemyOpacity, setEnemyOpacity] = useState(1);
 
   const addMessage = (msg: string) => {
     setMessages(prev => {
@@ -40,79 +29,60 @@ export default function WrestlingGame() {
 
   // 移動処理 (十字キー)
   const move = (dx: number, dy: number) => {
-    if (isGameOver) return;
-    let newX = playerCoords.current.x + dx;
-    let newY = playerCoords.current.y + dy;
-    
-    // リング外に出ないように制限
-    if (newX < -30) newX = -30;
-    if (newX > ARENA_WIDTH - 100) newX = ARENA_WIDTH - 100;
-    if (newY < 20) newY = 20; 
-    if (newY > ARENA_HEIGHT - 120) newY = ARENA_HEIGHT - 120;
+    if (isGameOver || !isPlayerTurn) return;
+    setPlayerPos(prev => {
+      let newX = prev.x + dx;
+      let newY = prev.y + dy;
+      
+      // リング外に出ないように制限
+      if (newX < -30) newX = -30;
+      if (newX > ARENA_WIDTH - 100) newX = ARENA_WIDTH - 100;
+      if (newY < 20) newY = 20; 
+      if (newY > ARENA_HEIGHT - 120) newY = ARENA_HEIGHT - 120;
 
-    // アニメーションでスムーズに移動させる
-    Animated.timing(playerPosition, {
-      toValue: { x: newX, y: newY },
-      duration: 100,
-      useNativeDriver: false 
-    }).start();
-  };
+      // すり抜け防止（敵との衝突判定）
+      const distX = Math.abs(newX - ENEMY_POS.x);
+      const distY = Math.abs(newY - ENEMY_POS.y);
+      if (distX < 60 && distY < 30) {
+        // 敵と重なる場合は移動をキャンセルする
+        return prev;
+      }
 
-  // 当たり判定
-  const checkHit = () => {
-    const distX = playerCoords.current.x - 200; // 敵のX座標
-    const distY = playerCoords.current.y - 120; // 敵のY座標
-    const distance = Math.sqrt(distX * distX + distY * distY);
-    return distance < 120; // 当たり判定を大きく
-  };
-
-  // 揺れ・点滅アニメーション
-  const shakeAnimation = (target: 'player' | 'enemy') => {
-    const targetAnim = target === 'player' ? playerPosition.x : enemyPosition.x;
-    const opacityAnim = target === 'player' ? playerOpacity : enemyOpacity;
-    const basePos = target === 'player' ? playerCoords.current.x : 200;
-    
-    Animated.sequence([
-      Animated.timing(opacityAnim, { toValue: 0.3, duration: 50, useNativeDriver: false }),
-      Animated.timing(targetAnim, { toValue: basePos - 15, duration: 50, useNativeDriver: false }),
-      Animated.timing(targetAnim, { toValue: basePos + 15, duration: 50, useNativeDriver: false }),
-      Animated.timing(targetAnim, { toValue: basePos, duration: 50, useNativeDriver: false }),
-      Animated.timing(opacityAnim, { toValue: 1, duration: 50, useNativeDriver: false })
-    ]).start();
-  };
-
-  // 突進アニメーション
-  const attackAnimation = (attacker: 'player' | 'enemy', callback: () => void) => {
-    const moveAnimX = attacker === 'player' ? playerPosition.x : enemyPosition.x;
-    const basePos = attacker === 'player' ? playerCoords.current.x : 200;
-    const direction = attacker === 'player' ? 60 : -60;
-
-    Animated.sequence([
-      Animated.timing(moveAnimX, { toValue: basePos + direction, duration: 150, useNativeDriver: false }),
-      Animated.timing(moveAnimX, { toValue: basePos, duration: 150, useNativeDriver: false })
-    ]).start(() => {
-      callback();
+      return { x: newX, y: newY };
     });
+  };
+
+  // 当たり判定（攻撃時）
+  const checkHit = () => {
+    const distX = playerPos.x - ENEMY_POS.x;
+    const distY = playerPos.y - ENEMY_POS.y;
+    const distance = Math.sqrt(distX * distX + distY * distY);
+    return distance < 100; // 攻撃が届く距離
+  };
+
+  // 揺れ・点滅アニメーションの代替（Stateでシンプルに実装）
+  const shakeAnimation = (target: 'player' | 'enemy') => {
+    const setOpacity = target === 'player' ? setPlayerOpacity : setEnemyOpacity;
+    setOpacity(0.3);
+    setTimeout(() => setOpacity(1), 150);
   };
 
   const enemyAttack = () => {
     if (isGameOver) return;
     setTimeout(() => {
-      attackAnimation('enemy', () => {
-        const damage = Math.floor(Math.random() * 15) + 5;
-        addMessage(`【敵の反撃】強烈なボディスラム！ あなたは ${damage} のダメージを受けた！`);
-        shakeAnimation('player');
-        setPlayerHp(prev => {
-          const newHp = Math.max(0, prev - damage);
-          if (newHp === 0) {
-            setIsGameOver(true);
-            addMessage('1... 2... 3... カンカンカン！ あなたは負けてしまった...');
-          }
-          return newHp;
-        });
-        setIsPlayerTurn(true);
+      const damage = Math.floor(Math.random() * 15) + 5;
+      addMessage(`【敵の反撃】強烈なボディスラム！ あなたは ${damage} のダメージを受けた！`);
+      shakeAnimation('player');
+      setPlayerHp(prev => {
+        const newHp = Math.max(0, prev - damage);
+        if (newHp === 0) {
+          setIsGameOver(true);
+          addMessage('1... 2... 3... カンカンカン！ あなたは負けてしまった...');
+        }
+        return newHp;
       });
-    }, 1500);
+      setIsPlayerTurn(true);
+    }, 1000);
   };
 
   const attack = (moveName: string, minDmg: number, maxDmg: number) => {
@@ -124,20 +94,20 @@ export default function WrestlingGame() {
     }
 
     setIsPlayerTurn(false);
-    attackAnimation('player', () => {
-      const damage = Math.floor(Math.random() * (maxDmg - minDmg + 1)) + minDmg;
-      addMessage(`【ヒット！】渾身の ${moveName} ！！ 敵に ${damage} のダメージ！`);
-      shakeAnimation('enemy');
-      setEnemyHp(prev => {
-        const newHp = Math.max(0, prev - damage);
-        if (newHp === 0) {
-          setIsGameOver(true);
-          addMessage('1... 2... 3... カンカンカン！ あなたの勝利です！！！');
-        } else {
-          enemyAttack();
-        }
-        return newHp;
-      });
+    
+    const damage = Math.floor(Math.random() * (maxDmg - minDmg + 1)) + minDmg;
+    addMessage(`【ヒット！】渾身の ${moveName} ！！ 敵に ${damage} のダメージ！`);
+    shakeAnimation('enemy');
+    
+    setEnemyHp(prev => {
+      const newHp = Math.max(0, prev - damage);
+      if (newHp === 0) {
+        setIsGameOver(true);
+        addMessage('1... 2... 3... カンカンカン！ あなたの勝利です！！！');
+      } else {
+        enemyAttack();
+      }
+      return newHp;
     });
   };
 
@@ -147,7 +117,7 @@ export default function WrestlingGame() {
     setMessages(['試合開始！十字キーで敵に近づいて技を決めろ！']);
     setIsGameOver(false);
     setIsPlayerTurn(true);
-    playerPosition.setValue({ x: 50, y: 120 });
+    setPlayerPos({ x: 50, y: 150 });
   };
 
   const getHpWidth = (hp: number, maxHp: number) => `${(hp / maxHp) * 100}%`;
@@ -157,6 +127,11 @@ export default function WrestlingGame() {
     if (ratio > 0.2) return '#ffeb3b';
     return '#f44336';
   };
+
+  // 常に対峙するための向き計算
+  const isPlayerRight = playerPos.x > ENEMY_POS.x;
+  const playerScaleX = isPlayerRight ? -1 : 1;
+  const enemyScaleX = isPlayerRight ? 1 : -1;
 
   return (
     <SafeAreaView style={styles.container}>
@@ -184,15 +159,21 @@ export default function WrestlingGame() {
       <View style={styles.arenaContainer}>
         <ImageBackground source={require('../../assets/images/ring.png')} style={styles.arena} resizeMode="cover">
           {/* 敵キャラクター */}
-          <Animated.Image 
+          <Image 
             source={require('../../assets/images/enemy.png')} 
-            style={[styles.character, { left: enemyPosition.x, top: enemyPosition.y, opacity: enemyOpacity }]} 
+            style={[
+              styles.character, 
+              { left: ENEMY_POS.x, top: ENEMY_POS.y, opacity: enemyOpacity, zIndex: ENEMY_POS.y, transform: [{ scaleX: enemyScaleX }] }
+            ]} 
             resizeMode="contain"
           />
           {/* プレイヤーキャラクター */}
-          <Animated.Image 
+          <Image 
             source={require('../../assets/images/player.png')} 
-            style={[styles.character, { left: playerPosition.x, top: playerPosition.y, opacity: playerOpacity }]} 
+            style={[
+              styles.character, 
+              { left: playerPos.x, top: playerPos.y, opacity: playerOpacity, zIndex: playerPos.y, transform: [{ scaleX: playerScaleX }] }
+            ]} 
             resizeMode="contain"
           />
         </ImageBackground>
@@ -205,20 +186,20 @@ export default function WrestlingGame() {
           </TouchableOpacity>
         ) : (
           <View style={styles.controlRow}>
-            {/* 十字キー (onPress => onPressIn に変更して即座に反応させる) */}
+            {/* 十字キー (onPress で確実に反応させる) */}
             <View style={styles.dpad}>
-              <TouchableOpacity style={[styles.dpadBtn, styles.dpadUp]} onPressIn={() => move(0, -30)}>
+              <TouchableOpacity style={[styles.dpadBtn, styles.dpadUp]} onPress={() => move(0, -30)}>
                 <Text style={styles.dpadText}>▲</Text>
               </TouchableOpacity>
               <View style={styles.dpadMiddleRow}>
-                <TouchableOpacity style={[styles.dpadBtn, styles.dpadLeft]} onPressIn={() => move(-30, 0)}>
+                <TouchableOpacity style={[styles.dpadBtn, styles.dpadLeft]} onPress={() => move(-30, 0)}>
                   <Text style={styles.dpadText}>◀</Text>
                 </TouchableOpacity>
-                <TouchableOpacity style={[styles.dpadBtn, styles.dpadRight]} onPressIn={() => move(30, 0)}>
+                <TouchableOpacity style={[styles.dpadBtn, styles.dpadRight]} onPress={() => move(30, 0)}>
                   <Text style={styles.dpadText}>▶</Text>
                 </TouchableOpacity>
               </View>
-              <TouchableOpacity style={[styles.dpadBtn, styles.dpadDown]} onPressIn={() => move(0, 30)}>
+              <TouchableOpacity style={[styles.dpadBtn, styles.dpadDown]} onPress={() => move(0, 30)}>
                 <Text style={styles.dpadText}>▼</Text>
               </TouchableOpacity>
             </View>
@@ -254,10 +235,9 @@ const styles = StyleSheet.create({
   arenaContainer: { flex: 1, margin: 10, backgroundColor: '#000', borderRadius: 8, overflow: 'hidden' },
   arena: { flex: 1, width: '100%', height: '100%', position: 'relative' },
   character: { 
-    width: 130, // キャラを大きく
+    width: 140, 
     height: 160, 
-    position: 'absolute',
-    mixBlendMode: 'multiply' as any // 白背景を透過させるWeb用ハック
+    position: 'absolute'
   }, 
   controllerArea: { height: 200, backgroundColor: '#333', padding: 10, borderTopWidth: 2, borderColor: '#555' },
   controlRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', flex: 1 },
